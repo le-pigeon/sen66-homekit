@@ -1,0 +1,29 @@
+# Secrets
+wifi_secrets.h
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Arduino build output
+build/
+build-*/
+
+# Temporary files
+*.tmp
+*.bak
+
+# PlatformIO
+.pio/
+.vscode/
+
+# Compiled output
+*.bin
+*.elf
+*.hex
+*.eep
+*.map
+
+# Logs
+*.log
