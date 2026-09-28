@@ -31,7 +31,7 @@
  *   - Humidity
  *
  * RGB LED:
- *   Uses PM2.5 and CO2 conditions to indicate air quality.
+ *   Uses PM2.5 conditions to indicate air quality.
  *
  * Telnet:
  *   Port 23
@@ -54,12 +54,11 @@
 // PIN CONFIGURATION
 // ================================================================
 
-// SEN66 uses the ESP32-S3's normal hardware I2C bus.
+// SEN66 uses the ESP32-S3 hardware I2C bus.
 #define SEN66_SDA 1
 #define SEN66_SCL 2
 
-// OLED uses a separate software I2C bus.
-// This keeps the OLED completely separate from the SEN66.
+// OLED uses separate software I2C.
 #define OLED_SDA 6
 #define OLED_SCL 7
 
@@ -74,19 +73,19 @@
 // TIMING
 // ================================================================
 
-// SEN66 is read once every 10 seconds.
+// SEN66 read interval.
 //
-// This gives us:
+// 10 seconds:
 //   6 samples/minute
 //   360 samples/hour
 //   8640 samples/day
 #define SENSOR_INTERVAL_MS 10000
 
-// OLED display update interval.
+// OLED refresh interval.
 #define OLED_UPDATE_INTERVAL_MS 250
 
-// Automatically switch OLED page every 5 seconds.
-#define PAGE_INTERVAL_MS 5000
+// Automatically change OLED page every 5 seconds.
+#define PAGE_INTERVAL_MS 7000
 
 
 // ================================================================
@@ -94,18 +93,14 @@
 // ================================================================
 
 // PM2.5 history for one hour.
-//
-// 360 samples × 10 seconds = 1 hour.
 #define PM25_1H_SAMPLES 360
 
 // PM2.5 history for 24 hours.
-//
-// 8640 samples × 10 seconds = 24 hours.
 #define PM25_24H_SAMPLES 8640
 
-// CO2 history for 5 minutes.
+// CO2 history for five minutes.
 //
-// 30 samples × 10 seconds = 5 minutes.
+// 30 samples × 10 seconds = 300 seconds = 5 minutes.
 #define CO2_5M_SAMPLES 30
 
 
@@ -120,10 +115,9 @@ SensirionI2cSen66 sen66;
 // OLED
 // ================================================================
 //
-// The OLED uses software I2C on GPIO6 and GPIO7.
+// Software I2C on GPIO6 and GPIO7.
 //
-// We intentionally do NOT use GPIO1/2 here because those pins
-// are reserved for the SEN66 hardware I2C bus.
+// GPIO1/2 remain dedicated to the SEN66 hardware I2C bus.
 //
 
 U8G2_SH1106_128X64_NONAME_F_SW_I2C oled(
@@ -138,7 +132,7 @@ U8G2_SH1106_128X64_NONAME_F_SW_I2C oled(
 // SENSOR VALUES
 // ================================================================
 //
-// These variables contain the most recently measured values.
+// These are the latest sensor readings.
 //
 
 float pm1 = 0.0;
@@ -146,6 +140,9 @@ float pm25 = 0.0;
 float pm4 = 0.0;
 float pm10 = 0.0;
 
+// Keep the project-level CO2 variable as float.
+// The SEN66 library itself receives a separate uint16_t
+// temporary variable called co2Raw.
 float co2 = 0.0;
 
 float temperature = 0.0;
@@ -155,7 +152,7 @@ float vocIndex = 0.0;
 float noxIndex = 0.0;
 
 
-// Used to indicate whether the SEN66 currently has a valid reading.
+// Indicates whether the SEN66 currently has a valid reading.
 bool sensorOK = false;
 
 
@@ -164,9 +161,6 @@ bool sensorOK = false;
 // ================================================================
 
 // One-hour PM2.5 history.
-//
-// This is a circular/ring buffer. Once it is full,
-// new readings overwrite the oldest readings.
 float pm25History1H[PM25_1H_SAMPLES];
 
 int pm25History1HIndex = 0;
@@ -184,12 +178,9 @@ int pm25History24HCount = 0;
 // CO2 5-MINUTE HISTORY
 // ================================================================
 
-// Stores the most recent 30 CO2 readings.
+// Circular buffer containing the latest 30 CO2 readings.
 //
-// Because we read the sensor every 10 seconds:
-//
-// 30 readings × 10 seconds = 300 seconds = 5 minutes
-//
+// Once full, each new reading overwrites the oldest reading.
 float co2History5M[CO2_5M_SAMPLES];
 
 int co2History5MIndex = 0;
@@ -235,44 +226,28 @@ String telnetInput = "";
 // HOMESPAN / HOMEKIT CHARACTERISTICS
 // ================================================================
 
-// Air quality service.
 SpanCharacteristic *homeAirQuality;
 
-// PM2.5.
 SpanCharacteristic *homePM25;
-
-// PM10.
 SpanCharacteristic *homePM10;
 
-
-// CO2 service.
 SpanCharacteristic *homeCO2Detected;
 SpanCharacteristic *homeCO2Level;
 
-
-// Temperature.
 SpanCharacteristic *homeTemperature;
 
-
-// Humidity.
 SpanCharacteristic *homeHumidity;
 
 
 // ================================================================
 // RGB LED
 // ================================================================
-//
-// The YD-ESP32-S3 onboard LED is a WS2812 addressable RGB LED.
-//
-// Values are deliberately kept low because the LED is very bright.
-//
 
 void setRGB(uint8_t r, uint8_t g, uint8_t b) {
   neopixelWrite(RGB_LED_PIN, r, g, b);
 }
 
 
-// Turn the RGB LED off.
 void rgbOff() {
   setRGB(0, 0, 0);
 }
@@ -281,13 +256,6 @@ void rgbOff() {
 // ================================================================
 // PM2.5 → HOMEKIT AIR QUALITY
 // ================================================================
-//
-// HomeKit's AirQuality characteristic is a categorical value,
-// rather than a PM2.5 concentration.
-//
-// We therefore convert the PM2.5 measurement into one of the
-// HomeKit AirQuality categories.
-//
 
 void updateHomeKitAirQuality(float value) {
 
@@ -338,19 +306,14 @@ void updateHomeKitAirQuality(float value) {
 
 void addPM25History1H(float value) {
 
-  // Store the newest reading.
   pm25History1H[pm25History1HIndex] = value;
 
-  // Move to the next position.
   pm25History1HIndex++;
 
-  // Wrap around when we reach the end.
   if (pm25History1HIndex >= PM25_1H_SAMPLES) {
     pm25History1HIndex = 0;
   }
 
-  // During startup, gradually increase the number of
-  // valid readings until the buffer is full.
   if (pm25History1HCount < PM25_1H_SAMPLES) {
     pm25History1HCount++;
   }
@@ -421,38 +384,33 @@ float getPM25Average24H() {
 // ADD CO2 TO 5-MINUTE HISTORY
 // ================================================================
 //
-// This is a circular buffer.
+// Circular buffer.
 //
-// Example:
-//
-// Reading 1  → buffer[0]
-// Reading 2  → buffer[1]
+// Reading 1  -> buffer[0]
+// Reading 2  -> buffer[1]
 // ...
-// Reading 30 → buffer[29]
-// Reading 31 → buffer[0]  ← replaces oldest reading
+// Reading 30 -> buffer[29]
+// Reading 31 -> buffer[0], replacing reading 1
 //
-// This means the buffer always contains the most recent
-// 5 minutes of CO2 data once it is full.
+// co2History5MCount tells us how many valid readings exist.
+//
+// co2History5MIndex tells us where the NEXT reading will go.
 //
 
 void addCO2History(float value) {
 
-  // Store the newest CO2 reading.
+  // Store newest reading.
   co2History5M[co2History5MIndex] = value;
 
-  // Move to the next position.
+  // Advance write position.
   co2History5MIndex++;
 
-  // Wrap back to the beginning.
+  // Wrap around.
   if (co2History5MIndex >= CO2_5M_SAMPLES) {
     co2History5MIndex = 0;
   }
 
-  // Increase the valid sample count during startup.
-  //
-  // This is important because the array starts at zero.
-  // We do NOT want those initial zeroes included in
-  // the average.
+  // Increase valid count until buffer is full.
   if (co2History5MCount < CO2_5M_SAMPLES) {
     co2History5MCount++;
   }
@@ -462,31 +420,15 @@ void addCO2History(float value) {
 // ================================================================
 // CALCULATE CO2 5-MINUTE AVERAGE
 // ================================================================
-//
-// During startup this function only averages the readings that
-// actually exist.
-//
-// For example:
-//
-//   1 reading  → average of 1
-//   6 readings → average of 6
-//   15 readings → average of 15
-//   30 readings → full 5-minute average
-//
-// Once 30 readings have been collected, the buffer always
-// represents the latest 5 minutes.
-//
 
 float getCO2Average5M() {
 
-  // No readings yet.
   if (co2History5MCount == 0) {
     return 0.0;
   }
 
   float sum = 0.0;
 
-  // Only include valid readings.
   for (int i = 0; i < co2History5MCount; i++) {
     sum += co2History5M[i];
   }
@@ -496,24 +438,21 @@ float getCO2Average5M() {
 
 
 // ================================================================
-// UPDATE ALL HISTORY AND AVERAGES
+// UPDATE HISTORY AND AVERAGES
 // ================================================================
 
 void storeHistorySample() {
 
-  // Add the current PM2.5 measurement to both history buffers.
   addPM25History1H(pm25);
+
   addPM25History24H(pm25);
 
-  // Add the current CO2 measurement to the 5-minute buffer.
   addCO2History(co2);
 
-  // Recalculate the averages.
-  //
-  // This is simple and easy to understand.
-  // The ESP32-S3 has enough processing power for this.
   pm25Average1H = getPM25Average1H();
+
   pm25Average24H = getPM25Average24H();
+
   co2Average5M = getCO2Average5M();
 }
 
@@ -521,59 +460,41 @@ void storeHistorySample() {
 // ================================================================
 // RGB STATUS
 // ================================================================
-//
-// The RGB LED uses the 1-hour PM2.5 average rather than a single
-// instantaneous reading. This prevents the LED from changing
-// colour because of one short-lived particle spike.
-//
-// CO2 can also be used as a ventilation indicator.
-//
 
 void updateRGBStatus() {
 
-  // If we don't have enough PM2.5 data yet, keep the LED dim.
+  // During startup, show very dim blue.
   if (pm25History1HCount < 30) {
 
-    // Very dim blue during startup.
     setRGB(0, 0, 2);
 
     return;
   }
 
 
-  // Use the 1-hour PM2.5 average for the main colour.
   float value = pm25Average1H;
 
 
-  // Excellent / very low PM2.5.
   if (value <= 12.0) {
 
     setRGB(0, 2, 0);
 
   }
-
-  // Good.
   else if (value <= 35.4) {
 
     setRGB(2, 2, 0);
 
   }
-
-  // Fair.
   else if (value <= 55.4) {
 
     setRGB(2, 1, 0);
 
   }
-
-  // Inferior.
   else if (value <= 150.4) {
 
     setRGB(3, 0, 0);
 
   }
-
-  // Poor.
   else {
 
     setRGB(5, 0, 0);
@@ -592,7 +513,10 @@ void readSEN66() {
   char errorMessage[256];
 
 
+  // ------------------------------------------------------------
   // Temporary variables used by the SEN66 library.
+  // ------------------------------------------------------------
+
   float massConcentrationPm1p0;
   float massConcentrationPm2p5;
   float massConcentrationPm4p0;
@@ -604,29 +528,55 @@ void readSEN66() {
   float vocIndexValue;
   float noxIndexValue;
 
-  float co2Value;
+  // IMPORTANT:
+  //
+  // Sensirion's SEN66 Arduino library expects the CO2 output
+  // parameter to be uint16_t.
+  //
+  // We therefore use co2Raw here rather than the global float
+  // variable called co2.
+  uint16_t co2Raw = 0;
 
 
+  // ------------------------------------------------------------
   // Read the latest measurement from the SEN66.
+  // ------------------------------------------------------------
+
   error = sen66.readMeasuredValues(
+
     massConcentrationPm1p0,
+
     massConcentrationPm2p5,
+
     massConcentrationPm4p0,
+
     massConcentrationPm10p0,
+
     ambientHumidity,
+
     ambientTemperature,
+
     vocIndexValue,
+
     noxIndexValue,
-    co2Value
+
+    co2Raw
   );
 
 
-  // Check whether the SEN66 returned an error.
+  // ------------------------------------------------------------
+  // Check for SEN66 error.
+  // ------------------------------------------------------------
+
   if (error != 0) {
 
     sensorOK = false;
 
-    errorToString(error, errorMessage, sizeof(errorMessage));
+    errorToString(
+      error,
+      errorMessage,
+      sizeof(errorMessage)
+    );
 
     Serial.print("SEN66 read error: ");
     Serial.println(errorMessage);
@@ -635,30 +585,45 @@ void readSEN66() {
   }
 
 
-  // Store the sensor values in our global variables.
+  // ------------------------------------------------------------
+  // Store sensor values in global variables.
+  // ------------------------------------------------------------
+
   pm1 = massConcentrationPm1p0;
+
   pm25 = massConcentrationPm2p5;
+
   pm4 = massConcentrationPm4p0;
+
   pm10 = massConcentrationPm10p0;
 
   humidity = ambientHumidity;
+
   temperature = ambientTemperature;
 
   vocIndex = vocIndexValue;
+
   noxIndex = noxIndexValue;
 
-  co2 = co2Value;
+  // Convert the SEN66 uint16_t CO2 result into our global float.
+  co2 = (float)co2Raw;
 
 
-  // The sensor returned a valid reading.
+  // Valid sensor reading.
   sensorOK = true;
 
 
-  // Store the reading in our history buffers.
+  // ------------------------------------------------------------
+  // Store in history buffers.
+  // ------------------------------------------------------------
+
   storeHistorySample();
 
 
-  // Update HomeKit with the newest instantaneous readings.
+  // ------------------------------------------------------------
+  // Update HomeKit instantaneous values.
+  // ------------------------------------------------------------
+
   if (homePM25) {
     homePM25->setVal(pm25);
   }
@@ -680,18 +645,14 @@ void readSEN66() {
   }
 
 
-  // Update HomeKit's categorical air-quality value.
+  // Update categorical HomeKit air quality.
   updateHomeKitAirQuality(pm25);
 
 
-  // HomeKit's CarbonDioxideDetected characteristic is
-  // separate from the numerical CO2 level.
-  //
-  // "NORMAL" appears in Apple Home as "No".
-  //
-  // This does NOT mean the sensor failed to detect CO2.
-  //
-  // It means CO2 is below our abnormal threshold.
+  // ------------------------------------------------------------
+  // HomeKit CO2 abnormal status.
+  // ------------------------------------------------------------
+
   if (homeCO2Detected) {
 
     if (co2 >= 2000.0) {
@@ -710,11 +671,17 @@ void readSEN66() {
   }
 
 
-  // Update the RGB status LED.
+  // ------------------------------------------------------------
+  // Update RGB LED.
+  // ------------------------------------------------------------
+
   updateRGBStatus();
 
 
-  // Print sensor values to Serial for debugging.
+  // ------------------------------------------------------------
+  // Serial diagnostics.
+  // ------------------------------------------------------------
+
   Serial.println();
   Serial.println("----- SEN66 -----");
 
@@ -741,11 +708,18 @@ void readSEN66() {
   Serial.print("CO2 5M AVG:  ");
 
   if (co2History5MCount >= CO2_5M_SAMPLES) {
+
     Serial.print(co2Average5M);
     Serial.println(" ppm");
+
   }
   else {
-    Serial.println("warming up");
+
+    Serial.print("warming up (");
+    Serial.print(co2History5MCount);
+    Serial.print("/");
+    Serial.print(CO2_5M_SAMPLES);
+    Serial.println(")");
   }
 
   Serial.print("Temperature: ");
@@ -769,16 +743,6 @@ void readSEN66() {
 // ================================================================
 // DRAW GRAPH
 // ================================================================
-//
-// Draws a simple line graph on the OLED.
-//
-// The graph receives an array of values and maps them onto the
-// available OLED area.
-//
-// This is not intended to be a scientific plotting system.
-// It is simply a compact way of seeing how the sensor has changed
-// over time.
-//
 
 void drawGraph(
   float *values,
@@ -791,64 +755,92 @@ void drawGraph(
   int height
 ) {
 
-  // Draw the graph border.
-  oled.drawFrame(x, y, width, height);
+  oled.drawFrame(
+    x,
+    y,
+    width,
+    height
+  );
 
 
-  // Need at least two points to draw a line.
   if (count < 2) {
     return;
   }
 
 
-  // Determine how many actual samples we want to display.
-  int samplesToDraw = min(count, maxSamples);
+  int samplesToDraw =
+    min(count, maxSamples);
+
 
   if (samplesToDraw < 2) {
     return;
   }
 
 
-  // Determine where the first sample should start.
-  int startIndex = count - samplesToDraw;
+  int startIndex =
+    count - samplesToDraw;
 
 
-  // Draw each line segment.
   for (int i = 1; i < samplesToDraw; i++) {
 
-    float previousValue = values[startIndex + i - 1];
-    float currentValue = values[startIndex + i];
+    float previousValue =
+      values[startIndex + i - 1];
+
+    float currentValue =
+      values[startIndex + i];
 
 
-    // Limit values to the graph's range.
-    previousValue = constrain(
-      previousValue,
-      0.0,
-      maxValue
+    previousValue =
+      constrain(
+        previousValue,
+        0.0,
+        maxValue
+      );
+
+    currentValue =
+      constrain(
+        currentValue,
+        0.0,
+        maxValue
+      );
+
+
+    int x1 =
+      x +
+      ((i - 1) * (width - 2)) /
+      (samplesToDraw - 1);
+
+    int x2 =
+      x +
+      (i * (width - 2)) /
+      (samplesToDraw - 1);
+
+
+    int y1 =
+      y +
+      height -
+      2 -
+      (int)(
+        (previousValue / maxValue) *
+        (height - 3)
+      );
+
+    int y2 =
+      y +
+      height -
+      2 -
+      (int)(
+        (currentValue / maxValue) *
+        (height - 3)
+      );
+
+
+    oled.drawLine(
+      x1,
+      y1,
+      x2,
+      y2
     );
-
-    currentValue = constrain(
-      currentValue,
-      0.0,
-      maxValue
-    );
-
-
-    // Convert the sample number to an X coordinate.
-    int x1 = x + ((i - 1) * (width - 2)) / (samplesToDraw - 1);
-    int x2 = x + (i * (width - 2)) / (samplesToDraw - 1);
-
-
-    // Convert the sensor value to a Y coordinate.
-    int y1 = y + height - 2 -
-             (int)((previousValue / maxValue) * (height - 3));
-
-    int y2 = y + height - 2 -
-             (int)((currentValue / maxValue) * (height - 3));
-
-
-    // Draw the line between the two points.
-    oled.drawLine(x1, y1, x2, y2);
   }
 }
 
@@ -856,19 +848,6 @@ void drawGraph(
 // ================================================================
 // GET CHRONOLOGICAL PM2.5 HISTORY
 // ================================================================
-//
-// The circular buffer does not necessarily start with the oldest
-// sample at index 0.
-//
-// This helper returns a sample in chronological order so that
-// the graph can draw:
-//
-// oldest ------------------------ newest
-//
-// rather than:
-//
-// random buffer order
-//
 
 float getPM25History1H(int chronologicalIndex) {
 
@@ -877,8 +856,8 @@ float getPM25History1H(int chronologicalIndex) {
   }
 
 
-  // Find the oldest valid sample.
   int oldestIndex;
+
 
   if (pm25History1HCount < PM25_1H_SAMPLES) {
 
@@ -892,7 +871,10 @@ float getPM25History1H(int chronologicalIndex) {
 
 
   int actualIndex =
-    (oldestIndex + chronologicalIndex) % PM25_1H_SAMPLES;
+    (
+      oldestIndex +
+      chronologicalIndex
+    ) % PM25_1H_SAMPLES;
 
 
   return pm25History1H[actualIndex];
@@ -912,7 +894,6 @@ void drawPM25Graph() {
   const int graphHeight = 34;
 
 
-  // Draw the graph border.
   oled.drawFrame(
     graphX,
     graphY,
@@ -921,25 +902,30 @@ void drawPM25Graph() {
   );
 
 
-  // Draw a rough 35.4 ug/m3 reference line.
-  //
-  // This corresponds to the upper boundary of the "Good"
-  // PM2.5 range used in this project.
-  //
-  // It is only a visual reference, not an official HomeKit line.
+  // PM2.5 reference at 35.4 ug/m3.
   float reference = 35.4;
 
 
   float graphMax = 100.0;
 
+
   if (pm25Average1H > 80.0) {
-    graphMax = ceil(pm25Average1H / 20.0) * 20.0;
+
+    graphMax =
+      ceil(
+        pm25Average1H / 20.0
+      ) * 20.0;
   }
 
 
   int referenceY =
-    graphY + graphHeight - 2 -
-    (int)((reference / graphMax) * (graphHeight - 3));
+    graphY +
+    graphHeight -
+    2 -
+    (int)(
+      (reference / graphMax) *
+      (graphHeight - 3)
+    );
 
 
   if (
@@ -947,37 +933,44 @@ void drawPM25Graph() {
     referenceY < graphY + graphHeight
   ) {
 
-    // Draw a dotted reference line.
     for (
       int x = graphX + 2;
       x < graphX + graphWidth - 2;
       x += 4
     ) {
-      oled.drawPixel(x, referenceY);
+
+      oled.drawPixel(
+        x,
+        referenceY
+      );
     }
   }
 
 
-  // Draw the actual PM2.5 history.
-  //
-  // We temporarily copy the chronological values into a small
-  // display buffer.
-  //
-  // The display can only physically show 128 pixels across,
-  // so there is no benefit in drawing all 360 points separately.
+  // Copy chronological history into display buffer.
   float displayValues[128];
 
   int displayCount =
-    min(pm25History1HCount, 128);
+    min(
+      pm25History1HCount,
+      128
+    );
 
 
   for (int i = 0; i < displayCount; i++) {
 
     int sourceIndex =
-      (i * pm25History1HCount) / displayCount;
+      (
+        i *
+        pm25History1HCount
+      ) /
+      displayCount;
+
 
     displayValues[i] =
-      getPM25History1H(sourceIndex);
+      getPM25History1H(
+        sourceIndex
+      );
   }
 
 
@@ -995,14 +988,8 @@ void drawPM25Graph() {
 
 
 // ================================================================
-// CO2 GRAPH
+// DRAW CO2 GRAPH
 // ================================================================
-//
-// The CO2 graph covers the same 5-minute period as the rolling
-// average.
-//
-// Each point represents approximately one 10-second reading.
-//
 
 void drawCO2Graph() {
 
@@ -1013,26 +1000,27 @@ void drawCO2Graph() {
   const int graphHeight = 34;
 
 
-  // CO2 graph range.
-  //
-  // Start at 2000 ppm so normal indoor values occupy a useful
-  // portion of the graph.
   float graphMax = 2000.0;
 
 
-  // If CO2 exceeds the normal graph range, expand the graph.
   if (co2 > graphMax) {
-    graphMax = ceil(co2 / 500.0) * 500.0;
+
+    graphMax =
+      ceil(
+        co2 / 500.0
+      ) * 500.0;
   }
 
 
   if (co2Average5M > graphMax) {
+
     graphMax =
-      ceil(co2Average5M / 500.0) * 500.0;
+      ceil(
+        co2Average5M / 500.0
+      ) * 500.0;
   }
 
 
-  // Draw graph border.
   oled.drawFrame(
     graphX,
     graphY,
@@ -1041,15 +1029,18 @@ void drawCO2Graph() {
   );
 
 
-  // Draw an 800 ppm reference line.
-  //
-  // This is the ventilation reference used by this project.
+  // 800 ppm reference.
   float reference = 800.0;
 
 
   int referenceY =
-    graphY + graphHeight - 2 -
-    (int)((reference / graphMax) * (graphHeight - 3));
+    graphY +
+    graphHeight -
+    2 -
+    (int)(
+      (reference / graphMax) *
+      (graphHeight - 3)
+    );
 
 
   if (
@@ -1057,46 +1048,65 @@ void drawCO2Graph() {
     referenceY < graphY + graphHeight
   ) {
 
-    // Dotted reference line.
     for (
       int x = graphX + 2;
       x < graphX + graphWidth - 2;
       x += 4
     ) {
-      oled.drawPixel(x, referenceY);
+
+      oled.drawPixel(
+        x,
+        referenceY
+      );
     }
   }
 
 
-  // Draw the CO2 history.
+  // Copy chronological CO2 history into display buffer.
   float displayValues[128];
 
   int displayCount =
-    min(co2History5MCount, 128);
+    min(
+      co2History5MCount,
+      128
+    );
 
 
   for (int i = 0; i < displayCount; i++) {
 
     int sourceIndex =
-      (i * co2History5MCount) / displayCount;
+      (
+        i *
+        co2History5MCount
+      ) /
+      displayCount;
 
-    // The CO2 history buffer is circular, so convert
-    // chronological position into actual array position.
+
+    // Determine oldest reading.
     int oldestIndex;
 
-    if (co2History5MCount < CO2_5M_SAMPLES) {
+
+    if (
+      co2History5MCount <
+      CO2_5M_SAMPLES
+    ) {
 
       oldestIndex = 0;
 
     }
     else {
 
-      oldestIndex = co2History5MIndex;
+      oldestIndex =
+        co2History5MIndex;
     }
 
 
+    // Convert chronological index to actual buffer index.
     int actualIndex =
-      (oldestIndex + sourceIndex) % CO2_5M_SAMPLES;
+      (
+        oldestIndex +
+        sourceIndex
+      ) % CO2_5M_SAMPLES;
 
 
     displayValues[i] =
@@ -1126,15 +1136,23 @@ void drawPagePM25() {
   oled.clearBuffer();
 
 
-  // Page title.
-  oled.setFont(u8g2_font_6x10_tf);
-  oled.drawStr(0, 9, "PM2.5");
+  oled.setFont(
+    u8g2_font_6x10_tf
+  );
+
+  oled.drawStr(
+    0,
+    9,
+    "PM2.5"
+  );
 
 
-  // Current PM2.5.
-  oled.setFont(u8g2_font_7x13B_tf);
+  oled.setFont(
+    u8g2_font_7x13B_tf
+  );
 
   char buffer[32];
+
 
   snprintf(
     buffer,
@@ -1143,11 +1161,18 @@ void drawPagePM25() {
     pm25
   );
 
-  oled.drawStr(55, 10, buffer);
+
+  oled.drawStr(
+    55,
+    10,
+    buffer
+  );
 
 
-  // 1-hour average.
-  oled.setFont(u8g2_font_5x8_tf);
+  oled.setFont(
+    u8g2_font_5x8_tf
+  );
+
 
   snprintf(
     buffer,
@@ -1156,10 +1181,14 @@ void drawPagePM25() {
     pm25Average1H
   );
 
-  oled.drawStr(0, 21, buffer);
+
+  oled.drawStr(
+    0,
+    21,
+    buffer
+  );
 
 
-  // 24-hour average.
   snprintf(
     buffer,
     sizeof(buffer),
@@ -1167,10 +1196,14 @@ void drawPagePM25() {
     pm25Average24H
   );
 
-  oled.drawStr(45, 21, buffer);
+
+  oled.drawStr(
+    45,
+    21,
+    buffer
+  );
 
 
-  // Number of readings collected.
   snprintf(
     buffer,
     sizeof(buffer),
@@ -1178,10 +1211,14 @@ void drawPagePM25() {
     pm25History1HCount
   );
 
-  oled.drawStr(105, 21, buffer);
+
+  oled.drawStr(
+    105,
+    21,
+    buffer
+  );
 
 
-  // Draw the graph.
   drawPM25Graph();
 
 
@@ -1198,15 +1235,25 @@ void drawPageCO2() {
   oled.clearBuffer();
 
 
-  oled.setFont(u8g2_font_6x10_tf);
+  oled.setFont(
+    u8g2_font_6x10_tf
+  );
 
-  oled.drawStr(0, 9, "CO2");
+
+  oled.drawStr(
+    0,
+    9,
+    "CO2"
+  );
 
 
-  // Current CO2.
-  oled.setFont(u8g2_font_7x13B_tf);
+  oled.setFont(
+    u8g2_font_7x13B_tf
+  );
+
 
   char buffer[32];
+
 
   snprintf(
     buffer,
@@ -1215,15 +1262,23 @@ void drawPageCO2() {
     co2
   );
 
-  oled.drawStr(55, 10, buffer);
+
+  oled.drawStr(
+    55,
+    10,
+    buffer
+  );
 
 
-  oled.setFont(u8g2_font_5x8_tf);
+  oled.setFont(
+    u8g2_font_5x8_tf
+  );
 
 
-  // Only display the 5-minute average once we actually
-  // have 5 minutes of data.
-  if (co2History5MCount >= CO2_5M_SAMPLES) {
+  if (
+    co2History5MCount >=
+    CO2_5M_SAMPLES
+  ) {
 
     snprintf(
       buffer,
@@ -1232,21 +1287,15 @@ void drawPageCO2() {
       co2Average5M
     );
 
-    oled.drawStr(0, 21, buffer);
+
+    oled.drawStr(
+      0,
+      21,
+      buffer
+    );
 
 
-    // Ventilation indication.
-    //
-    // This is a project-specific indication based on the
-    // 5-minute CO2 average.
-    //
-    // It should be interpreted as:
-    //
-    //   <800 ppm  → OK
-    //   >=800 ppm → elevated
-    //
-    // It is NOT a formal ventilation certification.
-    if (co2Average5M >= 800.0) {
+    if (co2Average5M >= 1500.0) {
 
       oled.drawStr(
         62,
@@ -1267,12 +1316,12 @@ void drawPageCO2() {
   }
   else {
 
-    // We don't have a complete 5-minute window yet.
     oled.drawStr(
       0,
       21,
       "5M --"
     );
+
 
     oled.drawStr(
       62,
@@ -1282,7 +1331,6 @@ void drawPageCO2() {
   }
 
 
-  // Draw CO2 graph.
   drawCO2Graph();
 
 
@@ -1298,90 +1346,45 @@ void drawPageParticles() {
 
   oled.clearBuffer();
 
+  // Title
+  oled.setFont(u8g2_font_6x10_tf);
+  oled.drawUTF8(0, 9, "PARTICLES (µg/m3)");
+
+  // Horizontal divider below title
+  oled.drawHLine(0, 11, 128);
+
+  // Labels
+  oled.setFont(u8g2_font_5x8_tf);
+
+  oled.drawStr(2, 21, "PM1.0");
+  oled.drawStr(66, 21, "PM4.0");
+
+  // Values
   oled.setFont(u8g2_font_6x10_tf);
 
-  oled.drawStr(0, 9, "PARTICLES");
+  oled.setCursor(2, 32);
+  oled.print(pm1, 1);
 
+  oled.setCursor(66, 32);
+  oled.print(pm4, 1);
 
-  char buffer[32];
+  // Divider between rows
+  oled.drawHLine(0, 36, 128);
 
+  // Bottom labels
+  oled.setFont(u8g2_font_5x8_tf);
+
+  oled.drawStr(2, 46, "PM2.5");
+  oled.drawStr(66, 46, "PM10");
+
+  // Bottom values
   oled.setFont(u8g2_font_6x10_tf);
 
+  oled.setCursor(2, 58);
+  oled.print(pm25, 1);
 
-  // PM1.0.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "PM1   %.1f",
-    pm1
-  );
-
-  oled.drawStr(0, 22, buffer);
-
-
-  // PM2.5.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "PM2.5 %.1f",
-    pm25
-  );
-
-  oled.drawStr(64, 22, buffer);
-
-
-  // PM4.0.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "PM4   %.1f",
-    pm4
-  );
-
-  oled.drawStr(0, 35, buffer);
-
-
-  // PM10.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "PM10  %.1f",
-    pm10
-  );
-
-  oled.drawStr(64, 35, buffer);
-
-
-  // CO2.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "CO2   %.0f",
-    co2
-  );
-
-  oled.drawStr(0, 48, buffer);
-
-
-  // Sensor status.
-  if (sensorOK) {
-
-    oled.drawStr(
-      64,
-      48,
-      "SENSOR OK"
-    );
-
-  }
-  else {
-
-    oled.drawStr(
-      64,
-      48,
-      "ERROR"
-    );
-  }
-
+  oled.setCursor(66, 58);
+  oled.print(pm10, 1);
 
   oled.sendBuffer();
 }
@@ -1395,71 +1398,32 @@ void drawPageEnvironment() {
 
   oled.clearBuffer();
 
+  // Title
   oled.setFont(u8g2_font_6x10_tf);
+  oled.drawStr(0, 9, "ENVIRONMENT");
 
-  oled.drawStr(
-    0,
-    9,
-    "ENVIRONMENT"
-  );
+  // Temperature
+  oled.setFont(u8g2_font_7x14_tf);
+  oled.setCursor(0, 26);
+  oled.print("TEMP ");
+  oled.print(temperature, 1);
+  oled.print(" C");
 
+  // Humidity
+  oled.setCursor(0, 42);
+  oled.print("RH   ");
+  oled.print(humidity, 1);
+  oled.print(" %");
 
-  char buffer[32];
+  // VOC
+  oled.setCursor(0, 58);
+  oled.print("VOC  ");
+  oled.print(vocIndex, 0);
 
-
-  // Temperature.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "TEMP %.1f C",
-    temperature
-  );
-
-  oled.drawStr(0, 22, buffer);
-
-
-  // Relative humidity.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "RH   %.1f%%",
-    humidity
-  );
-
-  oled.drawStr(64, 22, buffer);
-
-
-  // VOC index.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "VOC  %.0f",
-    vocIndex
-  );
-
-  oled.drawStr(0, 38, buffer);
-
-
-  // NOx index.
-  snprintf(
-    buffer,
-    sizeof(buffer),
-    "NOx  %.0f",
-    noxIndex
-  );
-
-  oled.drawStr(64, 38, buffer);
-
-
-  // Explain that VOC/NOx are indices.
-  oled.setFont(u8g2_font_5x8_tf);
-
-  oled.drawStr(
-    0,
-    53,
-    "VOC/NOx = index"
-  );
-
+  // NOx
+  oled.setCursor(75, 58);
+  oled.print("NOx ");
+  oled.print(noxIndex, 0);
 
   oled.sendBuffer();
 }
@@ -1471,13 +1435,15 @@ void drawPageEnvironment() {
 
 void updateOLED() {
 
-  // If the sensor hasn't produced a valid reading yet,
-  // show a simple startup message.
   if (!sensorOK) {
 
     oled.clearBuffer();
 
-    oled.setFont(u8g2_font_6x10_tf);
+
+    oled.setFont(
+      u8g2_font_6x10_tf
+    );
+
 
     oled.drawStr(
       20,
@@ -1485,11 +1451,13 @@ void updateOLED() {
       "SEN66"
     );
 
+
     oled.drawStr(
       20,
       42,
       "WARMING..."
     );
+
 
     oled.sendBuffer();
 
@@ -1497,7 +1465,6 @@ void updateOLED() {
   }
 
 
-  // Select the appropriate page.
   switch (currentPage) {
 
     case 0:
@@ -1526,16 +1493,51 @@ void updateOLED() {
 void telnetPrintHelp() {
 
   telnetClient.println();
-  telnetClient.println("SEN66 Air Quality Monitor");
-  telnetClient.println("--------------------------------");
-  telnetClient.println("help     - Show this help");
-  telnetClient.println("status   - Show system status");
-  telnetClient.println("sensor   - Show sensor readings");
-  telnetClient.println("wifi     - Show WiFi information");
-  telnetClient.println("memory   - Show memory usage");
-  telnetClient.println("uptime   - Show uptime");
-  telnetClient.println("restart  - Restart ESP32");
-  telnetClient.println("--------------------------------");
+
+  telnetClient.println(
+    "SEN66 Air Quality Monitor"
+  );
+
+  telnetClient.println(
+    "--------------------------------"
+  );
+
+  telnetClient.println(
+    "help       - Show this help"
+  );
+
+  telnetClient.println(
+    "status     - Show system status"
+  );
+
+  telnetClient.println(
+    "sensor     - Show sensor readings"
+  );
+
+  telnetClient.println(
+    "wifi       - Show WiFi information"
+  );
+
+  telnetClient.println(
+    "memory     - Show memory usage"
+  );
+
+  telnetClient.println(
+    "uptime     - Show uptime"
+  );
+
+  telnetClient.println(
+    "co2history - Show CO2 buffer status"
+  );
+
+  telnetClient.println(
+    "restart    - Restart ESP32"
+  );
+
+  telnetClient.println(
+    "--------------------------------"
+  );
+
   telnetClient.println();
 }
 
@@ -1550,6 +1552,7 @@ void telnetPrintStatus() {
 
   telnetClient.println("STATUS");
   telnetClient.println("------");
+
 
   telnetClient.print("Sensor: ");
 
@@ -1581,11 +1584,22 @@ void telnetPrintStatus() {
   telnetClient.println(" ppm");
 
 
-  if (co2History5MCount >= CO2_5M_SAMPLES) {
+  if (
+    co2History5MCount >=
+    CO2_5M_SAMPLES
+  ) {
 
-    telnetClient.print("CO2 5M AVG: ");
-    telnetClient.print(co2Average5M);
-    telnetClient.println(" ppm");
+    telnetClient.print(
+      "CO2 5M AVG: "
+    );
+
+    telnetClient.print(
+      co2Average5M
+    );
+
+    telnetClient.println(
+      " ppm"
+    );
 
   }
   else {
@@ -1611,39 +1625,49 @@ void telnetPrintSensor() {
   telnetClient.println("SENSOR");
   telnetClient.println("------");
 
+
   telnetClient.print("PM1.0: ");
   telnetClient.print(pm1);
   telnetClient.println(" ug/m3");
+
 
   telnetClient.print("PM2.5: ");
   telnetClient.print(pm25);
   telnetClient.println(" ug/m3");
 
+
   telnetClient.print("PM4.0: ");
   telnetClient.print(pm4);
   telnetClient.println(" ug/m3");
+
 
   telnetClient.print("PM10: ");
   telnetClient.print(pm10);
   telnetClient.println(" ug/m3");
 
+
   telnetClient.print("CO2: ");
   telnetClient.print(co2);
   telnetClient.println(" ppm");
+
 
   telnetClient.print("Temperature: ");
   telnetClient.print(temperature);
   telnetClient.println(" C");
 
+
   telnetClient.print("Humidity: ");
   telnetClient.print(humidity);
   telnetClient.println(" %");
 
+
   telnetClient.print("VOC Index: ");
   telnetClient.println(vocIndex);
 
+
   telnetClient.print("NOx Index: ");
   telnetClient.println(noxIndex);
+
 
   telnetClient.println();
 }
@@ -1660,15 +1684,28 @@ void telnetPrintWifi() {
   telnetClient.println("WIFI");
   telnetClient.println("----");
 
+
   telnetClient.print("SSID: ");
-  telnetClient.println(WiFi.SSID());
+  telnetClient.println(
+    WiFi.SSID()
+  );
+
 
   telnetClient.print("IP: ");
-  telnetClient.println(WiFi.localIP());
+  telnetClient.println(
+    WiFi.localIP()
+  );
+
 
   telnetClient.print("RSSI: ");
-  telnetClient.print(WiFi.RSSI());
-  telnetClient.println(" dBm");
+  telnetClient.print(
+    WiFi.RSSI()
+  );
+
+  telnetClient.println(
+    " dBm"
+  );
+
 
   telnetClient.println();
 }
@@ -1685,13 +1722,32 @@ void telnetPrintMemory() {
   telnetClient.println("MEMORY");
   telnetClient.println("------");
 
-  telnetClient.print("Free heap: ");
-  telnetClient.print(ESP.getFreeHeap());
-  telnetClient.println(" bytes");
 
-  telnetClient.print("Free PSRAM: ");
-  telnetClient.print(ESP.getFreePsram());
-  telnetClient.println(" bytes");
+  telnetClient.print(
+    "Free heap: "
+  );
+
+  telnetClient.print(
+    ESP.getFreeHeap()
+  );
+
+  telnetClient.println(
+    " bytes"
+  );
+
+
+  telnetClient.print(
+    "Free PSRAM: "
+  );
+
+  telnetClient.print(
+    ESP.getFreePsram()
+  );
+
+  telnetClient.println(
+    " bytes"
+  );
+
 
   telnetClient.println();
 }
@@ -1706,27 +1762,149 @@ void telnetPrintUptime() {
   unsigned long seconds =
     millis() / 1000;
 
+
   unsigned long minutes =
     seconds / 60;
 
+
   seconds %= 60;
+
 
   unsigned long hours =
     minutes / 60;
 
+
   minutes %= 60;
 
 
-  telnetClient.print("Uptime: ");
+  telnetClient.print(
+    "Uptime: "
+  );
 
-  telnetClient.print(hours);
-  telnetClient.print("h ");
 
-  telnetClient.print(minutes);
-  telnetClient.print("m ");
+  telnetClient.print(
+    hours
+  );
 
-  telnetClient.print(seconds);
-  telnetClient.println("s");
+  telnetClient.print(
+    "h "
+  );
+
+
+  telnetClient.print(
+    minutes
+  );
+
+  telnetClient.print(
+    "m "
+  );
+
+
+  telnetClient.print(
+    seconds
+  );
+
+  telnetClient.println(
+    "s"
+  );
+}
+
+
+// ================================================================
+// TELNET CO2 HISTORY
+// ================================================================
+//
+// Shows the state of the 30-entry circular CO2 buffer.
+//
+// Count:
+//   Number of valid readings currently stored.
+//
+// Next index:
+//   The array position where the NEXT reading will be written.
+//
+// Once Count reaches 30, Next index is also the position
+// containing the oldest reading that will be overwritten next.
+//
+
+void telnetPrintCO2History() {
+
+  telnetClient.println();
+
+  telnetClient.println(
+    "CO2 5-MIN HISTORY"
+  );
+
+  telnetClient.println(
+    "------------------"
+  );
+
+
+  telnetClient.print(
+    "Count: "
+  );
+
+  telnetClient.print(
+    co2History5MCount
+  );
+
+  telnetClient.print(
+    " / "
+  );
+
+  telnetClient.println(
+    CO2_5M_SAMPLES
+  );
+
+
+  telnetClient.print(
+    "Next index: "
+  );
+
+  telnetClient.println(
+    co2History5MIndex
+  );
+
+
+  if (
+    co2History5MCount >=
+    CO2_5M_SAMPLES
+  ) {
+
+    telnetClient.println(
+      "Buffer: FULL"
+    );
+
+    telnetClient.print(
+      "Oldest slot: "
+    );
+
+    telnetClient.println(
+      co2History5MIndex
+    );
+
+  }
+  else {
+
+    telnetClient.println(
+      "Buffer: WARMING UP"
+    );
+  }
+
+
+  telnetClient.print(
+    "5M average: "
+  );
+
+  telnetClient.print(
+    co2Average5M
+  );
+
+  telnetClient.println(
+    " ppm"
+  );
+
+
+  telnetClient.println();
 }
 
 
@@ -1734,7 +1912,9 @@ void telnetPrintUptime() {
 // PROCESS TELNET COMMAND
 // ================================================================
 
-void processTelnetCommand(String command) {
+void processTelnetCommand(
+  String command
+) {
 
   command.trim();
 
@@ -1777,9 +1957,17 @@ void processTelnetCommand(String command) {
 
   }
 
+  else if (command == "co2history") {
+
+    telnetPrintCO2History();
+
+  }
+
   else if (command == "restart") {
 
-    telnetClient.println("Restarting...");
+    telnetClient.println(
+      "Restarting..."
+    );
 
     delay(500);
 
@@ -1802,21 +1990,29 @@ void processTelnetCommand(String command) {
 
 void handleTelnet() {
 
-  // If we don't currently have a client, check whether someone
-  // is trying to connect.
-  if (!telnetClient || !telnetClient.connected()) {
+  // Check for a new client if we don't currently
+  // have an authenticated/connected client.
+  if (
+    !telnetClient ||
+    !telnetClient.connected()
+  ) {
 
     telnetAuthenticated = false;
+
     telnetLoginAttempts = 0;
+
 
     WiFiClient newClient =
       telnetServer.available();
+
 
     if (newClient) {
 
       telnetClient = newClient;
 
+
       telnetClient.println();
+
       telnetClient.println(
         "SEN66 Air Quality Monitor"
       );
@@ -1825,38 +2021,53 @@ void handleTelnet() {
         "Password:"
       );
 
+
       telnetInput = "";
     }
+
 
     return;
   }
 
 
-  // Process incoming characters.
   while (telnetClient.available()) {
 
-    char c = telnetClient.read();
+    char c =
+      telnetClient.read();
 
 
-    // Don't echo password characters.
+    // ------------------------------------------------------------
+    // Password entry
+    // ------------------------------------------------------------
+
     if (!telnetAuthenticated) {
 
-      if (c == '\n' || c == '\r') {
+      if (
+        c == '\n' ||
+        c == '\r'
+      ) {
 
         String password =
           telnetInput;
 
+
         telnetInput = "";
 
 
-        if (password == TERMINAL_PASSWORD) {
+        if (
+          password ==
+          TERMINAL_PASSWORD
+        ) {
 
           telnetAuthenticated = true;
 
+
           telnetClient.println();
+
           telnetClient.println(
             "Login successful."
           );
+
 
           telnetPrintHelp();
 
@@ -1865,16 +2076,20 @@ void handleTelnet() {
 
           telnetLoginAttempts++;
 
+
           telnetClient.println(
             "Incorrect password."
           );
 
 
-          if (telnetLoginAttempts >= 3) {
+          if (
+            telnetLoginAttempts >= 3
+          ) {
 
             telnetClient.println(
               "Too many attempts."
             );
+
 
             telnetClient.stop();
 
@@ -1890,27 +2105,43 @@ void handleTelnet() {
       }
       else {
 
-        // Only accept printable characters.
-        if (c >= 32 && c <= 126) {
+        if (
+          c >= 32 &&
+          c <= 126
+        ) {
+
           telnetInput += c;
         }
       }
+
 
       continue;
     }
 
 
-    // Once authenticated, echo normal commands.
-    if (c == '\n' || c == '\r') {
+    // ------------------------------------------------------------
+    // Authenticated command entry
+    // ------------------------------------------------------------
 
-      processTelnetCommand(telnetInput);
+    if (
+      c == '\n' ||
+      c == '\r'
+    ) {
+
+      processTelnetCommand(
+        telnetInput
+      );
+
 
       telnetInput = "";
 
     }
     else {
 
-      if (c >= 32 && c <= 126) {
+      if (
+        c >= 32 &&
+        c <= 126
+      ) {
 
         telnetInput += c;
 
@@ -1925,19 +2156,19 @@ void handleTelnet() {
 // HOMESPAN AIR QUALITY SERVICE
 // ================================================================
 
-struct AirQualityService : Service::AirQualitySensor {
+struct AirQualityService :
+  Service::AirQualitySensor {
 
   AirQualityService() {
 
-    // HomeKit's categorical air quality value.
     homeAirQuality =
       new Characteristic::AirQuality();
 
-    // PM2.5 density.
-    homePM25 =
-      new Characteristic::PM2_5Density();
 
-    // PM10 density.
+    homePM25 =
+      new Characteristic::PM25Density();
+
+
     homePM10 =
       new Characteristic::PM10Density();
   }
@@ -1945,8 +2176,6 @@ struct AirQualityService : Service::AirQualitySensor {
 
   boolean update() override {
 
-    // Sensor values are updated from readSEN66().
-    // Returning true tells HomeSpan the service is valid.
     return true;
   }
 };
@@ -1956,15 +2185,15 @@ struct AirQualityService : Service::AirQualitySensor {
 // HOMESPAN CO2 SERVICE
 // ================================================================
 
-struct CO2Service : Service::CarbonDioxideSensor {
+struct CO2Service :
+  Service::CarbonDioxideSensor {
 
   CO2Service() {
 
-    // Numerical CO2 concentration.
     homeCO2Level =
       new Characteristic::CarbonDioxideLevel();
 
-    // Whether CO2 is considered abnormal.
+
     homeCO2Detected =
       new Characteristic::CarbonDioxideDetected();
   }
@@ -1981,7 +2210,8 @@ struct CO2Service : Service::CarbonDioxideSensor {
 // HOMESPAN TEMPERATURE SERVICE
 // ================================================================
 
-struct TemperatureService : Service::TemperatureSensor {
+struct TemperatureService :
+  Service::TemperatureSensor {
 
   TemperatureService() {
 
@@ -2001,7 +2231,8 @@ struct TemperatureService : Service::TemperatureSensor {
 // HOMESPAN HUMIDITY SERVICE
 // ================================================================
 
-struct HumidityService : Service::HumiditySensor {
+struct HumidityService :
+  Service::HumiditySensor {
 
   HumidityService() {
 
@@ -2029,16 +2260,24 @@ void setup() {
 
 
   Serial.println();
-  Serial.println("================================");
-  Serial.println(" SEN66 Air Quality Monitor");
-  Serial.println("================================");
+
+  Serial.println(
+    "================================"
+  );
+
+  Serial.println(
+    " SEN66 Air Quality Monitor"
+  );
+
+  Serial.println(
+    "================================"
+  );
 
 
   // ------------------------------------------------------------
   // RGB LED
   // ------------------------------------------------------------
 
-  // Start with the LED off.
   rgbOff();
 
 
@@ -2046,9 +2285,11 @@ void setup() {
   // SEN66 I2C
   // ------------------------------------------------------------
 
-  Serial.println("Starting SEN66 I2C...");
+  Serial.println(
+    "Starting SEN66 I2C..."
+  );
 
-  // Hardware I2C for SEN66.
+
   Wire.begin(
     SEN66_SDA,
     SEN66_SCL,
@@ -2056,15 +2297,20 @@ void setup() {
   );
 
 
-  // Give the SEN66 library the I2C bus.
-  sen66.begin(Wire, 0x6B);
+  sen66.begin(
+    Wire,
+    0x6B
+  );
 
 
   // ------------------------------------------------------------
   // SEN66 INITIALIZATION
   // ------------------------------------------------------------
 
-  Serial.println("Initializing SEN66...");
+  Serial.println(
+    "Initializing SEN66..."
+  );
+
 
   uint16_t error = 0;
 
@@ -2072,7 +2318,9 @@ void setup() {
 
 
   // Stop any previous measurement.
-  error = sen66.stopMeasurement();
+  error =
+    sen66.stopMeasurement();
+
 
   if (error != 0) {
 
@@ -2082,11 +2330,15 @@ void setup() {
       sizeof(errorMessage)
     );
 
+
     Serial.print(
       "SEN66 stopMeasurement error: "
     );
 
-    Serial.println(errorMessage);
+
+    Serial.println(
+      errorMessage
+    );
   }
 
 
@@ -2094,7 +2346,9 @@ void setup() {
 
 
   // Start continuous measurement.
-  error = sen66.startContinuousMeasurement();
+  error =
+    sen66.startContinuousMeasurement();
+
 
   if (error != 0) {
 
@@ -2104,11 +2358,15 @@ void setup() {
       sizeof(errorMessage)
     );
 
+
     Serial.print(
       "SEN66 startMeasurement error: "
     );
 
-    Serial.println(errorMessage);
+
+    Serial.println(
+      errorMessage
+    );
 
   }
   else {
@@ -2123,12 +2381,11 @@ void setup() {
   // OLED
   // ------------------------------------------------------------
 
-  Serial.println("Starting OLED...");
+  Serial.println(
+    "Starting OLED..."
+  );
 
 
-  // Set the OLED I2C address.
-  //
-  // U8g2 expects the 8-bit address, hence << 1.
   oled.setI2CAddress(
     OLED_ADDRESS << 1
   );
@@ -2137,12 +2394,13 @@ void setup() {
   oled.begin();
 
 
-  // Clear the display.
   oled.clearBuffer();
+
 
   oled.setFont(
     u8g2_font_6x10_tf
   );
+
 
   oled.drawStr(
     20,
@@ -2150,11 +2408,13 @@ void setup() {
     "SEN66"
   );
 
+
   oled.drawStr(
     20,
     43,
     "Starting..."
   );
+
 
   oled.sendBuffer();
 
@@ -2163,9 +2423,15 @@ void setup() {
   // WIFI
   // ------------------------------------------------------------
 
-  Serial.println("Connecting to WiFi...");
+  Serial.println(
+    "Connecting to WiFi..."
+  );
 
-  WiFi.mode(WIFI_STA);
+
+  WiFi.mode(
+    WIFI_STA
+  );
+
 
   WiFi.begin(
     WIFI_SSID,
@@ -2173,7 +2439,10 @@ void setup() {
   );
 
 
-  while (WiFi.status() != WL_CONNECTED) {
+  while (
+    WiFi.status() !=
+    WL_CONNECTED
+  ) {
 
     delay(500);
 
@@ -2182,19 +2451,35 @@ void setup() {
 
 
   Serial.println();
-  Serial.println("WiFi Connected!");
 
-  Serial.print("IP address: ");
+  Serial.println(
+    "WiFi Connected!"
+  );
+
+
+  Serial.print(
+    "IP address: "
+  );
+
+
   Serial.println(
     WiFi.localIP()
   );
 
-  Serial.print("RSSI: ");
+
+  Serial.print(
+    "RSSI: "
+  );
+
+
   Serial.print(
     WiFi.RSSI()
   );
 
-  Serial.println(" dBm");
+
+  Serial.println(
+    " dBm"
+  );
 
 
   // ------------------------------------------------------------
@@ -2205,6 +2490,7 @@ void setup() {
 
   telnetServer.setNoDelay(true);
 
+
   Serial.println(
     "Telnet server started on port 23."
   );
@@ -2214,12 +2500,11 @@ void setup() {
   // HOMESPAN
   // ------------------------------------------------------------
 
-  Serial.println("Starting HomeSpan...");
+  Serial.println(
+    "Starting HomeSpan..."
+  );
 
 
-  // Start HomeSpan.
-  //
-  // This creates the Apple HomeKit accessory.
   homeSpan.begin(
     Category::Sensors,
     "SEN66 Air Quality"
@@ -2232,23 +2517,29 @@ void setup() {
 
   new SpanAccessory();
 
+
   new Service::AccessoryInformation();
+
 
   new Characteristic::Name(
     "SEN66 Air Quality"
   );
 
+
   new Characteristic::Manufacturer(
     "Sensirion"
   );
+
 
   new Characteristic::Model(
     "SEN66 + ESP32-S3"
   );
 
+
   new Characteristic::SerialNumber(
     "SEN66-ESP32"
   );
+
 
   new Characteristic::FirmwareRevision(
     "1.0"
@@ -2284,9 +2575,11 @@ void setup() {
 
 
   Serial.println();
+
   Serial.println(
     "HomeSpan started."
   );
+
 
   Serial.println(
     "Pair the accessory with Apple Home."
@@ -2297,11 +2590,15 @@ void setup() {
   // INITIAL TIMERS
   // ------------------------------------------------------------
 
+  // Force an immediate first sensor read.
   lastSensorRead =
-    millis() - SENSOR_INTERVAL_MS;
+    millis() -
+    SENSOR_INTERVAL_MS;
+
 
   lastOLEDUpdate =
     millis();
+
 
   lastPageChange =
     millis();
@@ -2318,8 +2615,6 @@ void loop() {
   // HOMEKIT
   // ------------------------------------------------------------
 
-  // HomeSpan needs to run continuously so it can communicate
-  // with Apple HomeKit.
   homeSpan.poll();
 
 
@@ -2334,15 +2629,19 @@ void loop() {
   // SENSOR READING
   // ------------------------------------------------------------
 
-  unsigned long now = millis();
+  unsigned long now =
+    millis();
 
 
   if (
-    now - lastSensorRead >=
+    now -
+    lastSensorRead >=
     SENSOR_INTERVAL_MS
   ) {
 
-    lastSensorRead = now;
+    lastSensorRead =
+      now;
+
 
     readSEN66();
   }
@@ -2353,15 +2652,22 @@ void loop() {
   // ------------------------------------------------------------
 
   if (
-    now - lastPageChange >=
+    now -
+    lastPageChange >=
     PAGE_INTERVAL_MS
   ) {
 
-    lastPageChange = now;
+    lastPageChange =
+      now;
+
 
     currentPage++;
 
-    if (currentPage >= 4) {
+
+    if (
+      currentPage >= 4
+    ) {
+
       currentPage = 0;
     }
   }
@@ -2372,11 +2678,14 @@ void loop() {
   // ------------------------------------------------------------
 
   if (
-    now - lastOLEDUpdate >=
+    now -
+    lastOLEDUpdate >=
     OLED_UPDATE_INTERVAL_MS
   ) {
 
-    lastOLEDUpdate = now;
+    lastOLEDUpdate =
+      now;
+
 
     updateOLED();
   }
