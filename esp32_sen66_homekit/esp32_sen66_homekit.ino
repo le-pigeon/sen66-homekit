@@ -37,17 +37,19 @@ SensirionI2cSen66 sen66;
 // OLED
 // ============================================================
 //
-// Important:
+// Software I2C
 //
-// U8g2's _2ND_HW_I2C constructor uses Arduino's Wire1 bus.
-// Therefore we configure Wire1 with GPIO 6/7 below.
+// SCL = GPIO 7
+// SDA = GPIO 6
 //
-// SEN66 uses Wire  -> GPIO 1/2
-// OLED  uses Wire1 -> GPIO 6/7
+// This avoids the Wire1 / second-hardware-I2C
+// pin configuration issue.
 //
 
-U8G2_SH1106_128X64_NONAME_F_2ND_HW_I2C oled(
+U8G2_SH1106_128X64_NONAME_F_SW_I2C oled(
   U8G2_R0,
+  OLED_SCL,
+  OLED_SDA,
   U8X8_PIN_NONE
 );
 
@@ -125,12 +127,6 @@ void printSEN66Error(int16_t error) {
 // ============================================================
 // UPDATE HOMESPAN AIR QUALITY STATUS
 // ============================================================
-//
-// HomeKit has a general AirQuality characteristic.
-//
-// We derive it from PM2.5. This is only a coarse status
-// indicator; the actual PM2.5 value is also exposed separately.
-//
 
 void updateAirQuality() {
 
@@ -263,11 +259,7 @@ void readSEN66() {
   }
 
 
-  // CO2 detected status.
-  //
-  // This is NOT the actual CO2 measurement.
-  // It is simply HomeKit's binary detected/not-detected
-  // characteristic.
+  // CO2 detected status
 
   if (homeCO2Detected) {
 
@@ -314,13 +306,6 @@ void readSEN66() {
 // ============================================================
 // OLED PAGE 1
 // ============================================================
-//
-// PM1
-// PM2.5
-// PM4
-// PM10
-// CO2
-//
 
 void drawOLEDPage1() {
 
@@ -378,12 +363,6 @@ void drawOLEDPage1() {
 // ============================================================
 // OLED PAGE 2
 // ============================================================
-//
-// Temperature
-// Humidity
-// VOC Index
-// NOx Index
-//
 
 void drawOLEDPage2() {
 
@@ -439,8 +418,6 @@ void updateOLED() {
 
   oled.clearBuffer();
 
-
-  // Sensor hasn't produced a valid measurement yet.
 
   if (!sensorOK) {
 
@@ -614,9 +591,6 @@ void setup() {
   );
 
 
-  // Wire = I2C bus 0
-  // SEN66 = GPIO1 / GPIO2
-
   Wire.begin(
     SEN66_SDA,
     SEN66_SCL,
@@ -654,9 +628,6 @@ void setup() {
   }
 
 
-  // Sensirion's current example waits 1200 ms
-  // after deviceReset().
-
   delay(1200);
 
 
@@ -685,35 +656,21 @@ void setup() {
   }
 
 
-  // Give the sensor time to produce its first
-  // measurement.
-
   delay(1100);
 
 
   // ==========================================================
-  // OLED I2C
+  // OLED
   // ==========================================================
 
   Serial.println(
-    "Starting OLED I2C..."
-  );
-
-
-  // Wire1 = I2C bus 1
-  // OLED = GPIO6 / GPIO7
-
-  Wire1.begin(
-    OLED_SDA,
-    OLED_SCL,
-    400000
+    "Starting OLED..."
   );
 
 
   oled.setI2CAddress(
     OLED_ADDRESS << 1
   );
-
 
   oled.begin();
 
@@ -759,10 +716,13 @@ void setup() {
   );
 
 
-  // Force first sensor read soon.
+  // Force first sensor read soon
 
-  lastSensorRead = millis() - SENSOR_INTERVAL;
-  lastOLEDUpdate = millis() - OLED_INTERVAL;
+  lastSensorRead =
+    millis() - SENSOR_INTERVAL;
+
+  lastOLEDUpdate =
+    millis() - OLED_INTERVAL;
 }
 
 
@@ -771,10 +731,6 @@ void setup() {
 // ============================================================
 
 void loop() {
-
-  // ----------------------------------------------------------
-  // HomeSpan
-  // ----------------------------------------------------------
 
   homeSpan.poll();
 
