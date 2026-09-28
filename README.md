@@ -26,7 +26,7 @@ The project is designed to make use of as much of the SEN66's environmental data
 
 ---
 
-# Hardware
+## Hardware
 
 | Component       | Description            |
 | --------------- | ---------------------- |
@@ -38,7 +38,7 @@ The project is designed to make use of as much of the SEN66's environmental data
 | Connectivity    | Wi-Fi                  |
 | Diagnostics     | Telnet                 |
 
-## GPIO Connections
+### GPIO Connections
 
 The SEN66 and OLED use separate I²C buses.
 
@@ -50,7 +50,7 @@ The SEN66 and OLED use separate I²C buses.
 | OLED            | SCL    |        GPIO 7 |
 | Onboard RGB LED | Data   |       GPIO 48 |
 
-### SEN66
+#### SEN66
 
 ```text
 SEN66       ESP32-S3
@@ -61,7 +61,7 @@ SCL    ->   GPIO 2
 GND    ->   GND
 ```
 
-### OLED
+#### OLED
 
 ```text
 SH1106      ESP32-S3
@@ -76,7 +76,7 @@ The OLED uses software I²C so that the SEN66 can remain on the ESP32's hardware
 
 ---
 
-# SEN66 Measurements
+## SEN66 Measurements
 
 The SEN66 provides the following measurements used by this project:
 
@@ -98,28 +98,28 @@ PM1.0 and PM4.0 are therefore retained locally, while VOC and NOx are displayed 
 
 ---
 
-# Apple HomeKit
+## Apple HomeKit
 
 HomeKit integration is provided directly by the ESP32 using [HomeSpan](https://github.com/HomeSpan/HomeSpan).
 
 The project exposes:
 
-### Air Quality Sensor
+#### Air Quality Sensor
 
 * PM2.5 density
 * PM10 density
 * Air Quality classification
 
-### Carbon Dioxide Sensor
+#### Carbon Dioxide Sensor
 
 * CO₂ concentration
 * Carbon dioxide detection status
 
-### Temperature Sensor
+#### Temperature Sensor
 
 * Temperature
 
-### Humidity Sensor
+#### Humidity Sensor
 
 * Relative humidity
 
@@ -127,7 +127,7 @@ The ESP32 connects directly to Apple HomeKit without requiring Home Assistant as
 
 ---
 
-# PM2.5 Air Quality Classification
+## PM2.5 Air Quality Classification
 
 The project converts PM2.5 concentration into HomeKit's `AirQuality` characteristic using PM2.5 concentration breakpoints derived from the **U.S. Environmental Protection Agency (EPA) Air Quality Index (AQI)**.
 
@@ -150,7 +150,7 @@ These thresholds are used by the firmware to determine the HomeKit `AirQuality` 
 
 ---
 
-# CO₂
+## CO₂
 
 CO₂ is exposed to HomeKit in two ways:
 
@@ -170,7 +170,7 @@ The `Detected` characteristic indicates whether the measured CO₂ level has cro
 
 ---
 
-# OLED Interface
+## OLED Interface
 
 The SH1106 OLED automatically cycles through four pages.
 
@@ -195,7 +195,7 @@ The graph uses the individual 10-second PM2.5 samples rather than 5-minute avera
 
 ---
 
-## Page 2 — CO₂
+### Page 2 — CO₂
 
 Displays:
 
@@ -215,7 +215,7 @@ This is a project-defined indicator and is not intended to represent a formal ve
 
 ---
 
-## Page 3 — Particles
+### Page 3 — Particles
 
 Displays all four particle-size measurements:
 
@@ -236,7 +236,7 @@ The page uses a two-column layout to make better use of the 128×64 display.
 
 ---
 
-## Page 4 — Environment
+### Page 4 — Environment
 
 Displays:
 
@@ -249,7 +249,7 @@ VOC and NOx are deliberately labelled as indices rather than concentrations.
 
 ---
 
-# VOC Index and NOx Index
+## VOC Index and NOx Index
 
 The SEN66 does not directly report VOC or NOx concentration in ppm through these values.
 
@@ -271,13 +271,13 @@ For this reason, the project keeps these measurements on the local OLED rather t
 
 ---
 
-# Measurement History
+## Measurement History
 
 The ESP32 stores recent measurements in RAM.
 
-## PM2.5
+### PM2.5
 
-### 1-hour history
+#### 1-hour history
 
 ```text
 360 samples
@@ -287,7 +287,7 @@ The ESP32 stores recent measurements in RAM.
 1 hour
 ```
 
-### 24-hour history
+#### 24-hour history
 
 ```text
 8640 samples
@@ -304,7 +304,7 @@ The firmware calculates:
 
 The 24-hour average is a simple arithmetic average of the stored PM2.5 measurements. It is **not an official air-quality index or regulatory metric**.
 
-## CO₂
+### CO₂
 
 The CO₂ history contains:
 
@@ -320,7 +320,7 @@ The firmware calculates a rolling 5-minute CO₂ average.
 
 Once the buffer is full, new measurements overwrite the oldest measurements.
 
-### Startup behaviour
+#### Startup behaviour
 
 The averages only use measurements that have actually been collected.
 
@@ -334,7 +334,7 @@ For example:
 
 This prevents the initial zero-filled buffer from artificially lowering the average.
 
-### Data persistence
+#### Data persistence
 
 Historical data is currently stored in RAM.
 
@@ -344,7 +344,7 @@ The firmware does not continuously write the history to flash.
 
 ---
 
-# Sensor Sampling and Display Timing
+## Sensor Sampling and Display Timing
 
 The main timing values are defined near the top of the sketch:
 
@@ -364,7 +364,7 @@ The OLED can therefore redraw much more frequently than the sensor is sampled.
 
 ---
 
-# RGB Status LED
+## RGB Status LED
 
 The onboard WS2812 RGB LED is controlled through GPIO 48.
 
@@ -388,7 +388,7 @@ sets a low-brightness green indication.
 
 ---
 
-# Telnet Diagnostics
+## Telnet Diagnostics
 
 The ESP32 runs a Telnet server on:
 
@@ -410,63 +410,26 @@ nc <ESP32-IP> 23
 
 The Telnet server requires the password defined in `wifi_secrets.h`.
 
-## Available Commands
+### Telnet Commands
 
-```text
-help
-status
-sensor
-wifi
-memory
-uptime
-co2history
-restart
-```
+| Command | Description |
+|---|---|
+| `help` | Lists available commands. |
+| `status` | Shows device and sensor status. |
+| `sensor` | Shows current SEN66 measurements. |
+| `wifi` | Shows Wi-Fi information. |
+| `memory` | Shows ESP32 memory usage. |
+| `uptime` | Shows device uptime. |
+| `co2history` | Shows the 5-minute CO₂ history buffer status. |
+| `restart` | Restarts the ESP32. |
 
-### `help`
+The `sensor` command also supports live monitoring, refreshing the readings every second.
 
-Displays the available commands.
-
-### `status`
-
-Displays general device and sensor status.
-
-### `sensor`
-
-Displays the current SEN66 measurements.
-
-The live monitoring mode can also refresh the readings every second.
-
-### `wifi`
-
-Displays Wi-Fi information.
-
-### `memory`
-
-Displays ESP32 memory information.
-
-### `uptime`
-
-Displays device uptime.
-
-### `co2history`
-
-Displays the current state of the 5-minute CO₂ history buffer.
-
-Useful information includes:
-
-* Number of stored readings
-* Next buffer index
-
-Once the buffer reaches 30 readings, the next index identifies the location that will be overwritten by the next measurement.
-
-### `restart`
-
-Restarts the ESP32.
+For `co2history`, the buffer stores up to **30 readings**. Once full, the `Next index` identifies the entry that will be overwritten by the next measurement.
 
 ---
 
-# Telnet Security
+## Telnet Security
 
 Telnet is an unencrypted protocol.
 
@@ -476,18 +439,18 @@ This project is intended for use on a trusted local network.
 
 ---
 
-# Software
+## Software
 
 The project is developed using the Arduino framework.
 
-## Main Libraries
+### Main Libraries
 
 * ESP32 Arduino Core
 * SensirionI2cSen66
 * U8g2
 * HomeSpan
 
-## Arduino IDE Configuration
+### Arduino IDE Configuration
 
 The current board configuration is:
 
@@ -513,7 +476,7 @@ Upload Speed:
 
 ---
 
-# Wi-Fi Configuration
+## Wi-Fi Configuration
 
 Wi-Fi credentials are stored separately in:
 
@@ -540,7 +503,7 @@ wifi_secrets.h
 
 ---
 
-# Project Structure
+## Project Structure
 
 The main firmware is contained in the Arduino `.ino` sketch.
 
@@ -574,7 +537,7 @@ Display
 
 ---
 
-# Known Limitations
+## Known Limitations
 
 * Historical data is lost after reboot.
 * VOC and NOx values are indices rather than direct gas concentrations.
@@ -583,18 +546,6 @@ Display
 * The OLED is limited to 128×64 pixels.
 * The CO₂ ventilation indicator is a project-defined threshold rather than a formal assessment.
 * HomeKit presentation is ultimately determined by Apple's Home app and HomeKit characteristics rather than being fully customizable by the firmware.
-
----
-
-# Why Not Expose Every SEN66 Measurement to HomeKit?
-
-The SEN66 provides more measurements than HomeKit has appropriate native characteristics for.
-
-Rather than forcing measurements into unrelated HomeKit characteristics, this project follows a simple approach:
-
-> **Display all useful measurements locally, while only exposing measurements to HomeKit where the representation is appropriate.**
-
-This keeps the HomeKit interface meaningful while preserving the additional SEN66 data through the local OLED and Telnet interface.
 
 ---
 
