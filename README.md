@@ -129,7 +129,9 @@ The ESP32 connects directly to Apple HomeKit without requiring Home Assistant as
 
 # PM2.5 Air Quality Classification
 
-The project converts PM2.5 concentration into HomeKit's `AirQuality` characteristic using the following project-defined thresholds:
+The project converts PM2.5 concentration into HomeKit's `AirQuality` characteristic using PM2.5 concentration breakpoints derived from the **U.S. Environmental Protection Agency (EPA) Air Quality Index (AQI)**.
+
+The thresholds currently implemented are based on the **historical U.S. EPA PM2.5 AQI breakpoints**:
 
 | PM2.5 (µg/m³) | HomeKit Air Quality |
 | ------------: | ------------------- |
@@ -137,9 +139,14 @@ The project converts PM2.5 concentration into HomeKit's `AirQuality` characteris
 |     12.1–35.4 | Good                |
 |     35.5–55.4 | Fair                |
 |    55.5–150.4 | Inferior            |
-|        >150.4 | Poor                |
+|       >150.4  | Poor                |
 
-These thresholds are used by the firmware to determine the HomeKit air-quality category. HomeKit itself does not calculate the category from the PM2.5 value.
+These thresholds are used by the firmware to determine the HomeKit `AirQuality` category. **HomeKit itself does not calculate this category from the PM2.5 value**; the ESP32 firmware performs the classification and sends the resulting category to HomeKit.
+
+> **Note:** The EPA updated its PM2.5 AQI breakpoints in 2024. The current breakpoints differ from those implemented here, including a lower first breakpoint of 9.0 µg/m³ and an upper breakpoint of 125.4 µg/m³ for the fourth category. The values above are retained because they are the thresholds currently implemented by this project.
+>
+> **Source:** U.S. Environmental Protection Agency, *Technical Assistance Document for the Reporting of Daily Air Quality – the Air Quality Index (AQI)*.
+> [EPA AQI Technical Assistance Document](https://document.airnow.gov/technical-assistance-document-for-the-reporting-of-daily-air-quailty.pdf)
 
 ---
 
